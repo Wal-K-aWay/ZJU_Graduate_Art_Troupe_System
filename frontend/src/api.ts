@@ -15,4 +15,11 @@ export const api = {
   ,logout: () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' }).then(j)
   ,imageUrl: (id: number) => `${BASE}/images/${id}`
   ,todayBirthdays: () => fetch(`${BASE}/stats/today_birthdays`, { credentials: 'include' }).then(r => r.json())
+  ,createAttendanceProject: (body: { title: string, location: string, time: string }) => fetch(`${BASE}/attendance/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) }).then(j)
+  ,listAttendanceProjects: () => fetch(`${BASE}/attendance/projects`, { credentials: 'include' }).then(r => r.json())
+  ,updateAttendanceProject: (id: number, body: { title: string, location: string, time: string, status?: string }) => fetch(`${BASE}/attendance/projects/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) }).then(j)
+  ,deleteAttendanceProject: (id: number) => fetch(`${BASE}/attendance/projects/${id}`, { method: 'DELETE', credentials: 'include' }).then(j)
+  ,assignAttendanceParticipants: (id: number, user_ids: number[]) => fetch(`${BASE}/attendance/projects/${id}/participants`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ user_ids }) }).then(j)
+  ,getAttendanceParticipants: (id: number) => fetch(`${BASE}/attendance/projects/${id}/participants`, { credentials: 'include' }).then(r => r.json())
+  ,replaceAttendanceParticipants: (id: number, user_ids: number[]) => fetch(`${BASE}/attendance/projects/${id}/participants`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ user_ids }) }).then(j)
 }

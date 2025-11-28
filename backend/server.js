@@ -200,6 +200,109 @@ app.get('/stats/today_birthdays', async (req, res) => {
   res.json(rows)
 })
 
+app.get('/attendance/projects', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+  const [rows] = await pool.query('SELECT id, CONVERT(title USING utf8mb4) AS title, CONVERT(location USING utf8mb4) AS location, DATE_FORMAT(start_time, "%Y-%m-%d %H:%i") AS start_time, DATE_FORMAT(end_time, "%Y-%m-%d %H:%i") AS end_time, status, created_by, created_at FROM attendance_projects ORDER BY start_time DESC')
+  res.json(rows)
+})
+
+app.post('/attendance/projects', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+  const b = req.body || {}
+  const title = String(b.title || '').trim()
+  const location = String(b.location || '').trim()
+  const time = String(b.time || '').trim()
+  if (!title || !location || !time) return res.status(400).json({ code: 400, message: '缺少必填字段' })
+  let start = time
+  if (time.includes('T')) start = time.replace('T', ' ') + (time.length === 16 ? ':00' : (time.length === 19 ? '' : ''))
+  else if (time.length === 16) start = time + ':00'
+  const [r] = await pool.query('INSERT INTO attendance_projects(title, location, start_time, status, created_by) VALUES(?, ?, ?, "open", ?)', [title, location, start, req.user.uid])
+  res.status(201).json({ code: 201, message: '创建成功', id: r.insertId })
+})
+
+app.put('/attendance/projects/:id', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+  const id = Number(req.params.id)
+  const b = req.body || {}
+  const title = String(b.title || '').trim()
+  const location = String(b.location || '').trim()
+  const time = String(b.time || '').trim()
+  const status = String(b.status || '').trim()
+  if (!title || !location || !time) return res.status(400).json({ code: 400, message: '缺少必填字段' })
+  let start = time
+  if (time.includes('T')) start = time.replace('T', ' ') + (time.length === 16 ? ':00' : (time.length === 19 ? '' : ''))
+  else if (time.length === 16) start = time + ':00'
+  const sql = status ? 'UPDATE attendance_projects SET title=?, location=?, start_time=?, status=? WHERE id=?' : 'UPDATE attendance_projects SET title=?, location=?, start_time=? WHERE id=?'
+  const params = status ? [title, location, start, status, id] : [title, location, start, id]
+  await pool.query(sql, params)
+  res.json({ code: 200, message: '更新成功' })
+})
+
+app.delete('/attendance/projects/:id', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+  const id = Number(req.params.id)
+  await pool.query('DELETE FROM attendance_projects WHERE id=?', [id])
+  res.json({ code: 200, message: '已删除' })
+})
+
+app.post('/attendance/projects/:id/participants', auth, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+    const projectId = Number(req.params.id)
+    const ids = Array.isArray(req.body?.user_ids) ? req.body.user_ids.map((x)=>Number(x)).filter((n)=>Number.isFinite(n) && n>0) : []
+    if (!ids.length) return res.json({ code: 200, message: '已更新', count: 0 })
+    const placeholders = ids.map(()=>'(?, ?, "assigned", ?)').join(', ')
+    const params = ids.flatMap((uid)=>[projectId, uid, req.user.uid])
+    await pool.query(`INSERT INTO attendance_participants(project_id, user_id, source, assigned_by) VALUES ${placeholders} ON DUPLICATE KEY UPDATE source=VALUES(source), assigned_by=VALUES(assigned_by)`, params)
+    res.json({ code: 200, message: '分配成功', count: ids.length })
+  } catch (e) {
+    console.error('assign participants error:', e)
+    res.status(400).json({ code: 400, message: String(e.message || e) })
+  }
+})
+
+app.get('/attendance/projects/:id/participants', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+  const projectId = Number(req.params.id)
+  const sql = `SELECT u.id, u.name, u.student_no, u.gender, CONVERT(c.name USING utf8mb4) AS college, u.join_year,
+    CAST((
+      SELECT JSON_ARRAYAGG(JSON_OBJECT('name', CONVERT(g.name USING utf8mb4), 'role', m.role))
+      FROM user_groups m JOIN troupe_groups g ON g.id=m.group_id
+      WHERE m.user_id=u.id AND m.status='active'
+    ) AS CHAR) AS groups_json
+    FROM attendance_participants p JOIN users u ON u.id=p.user_id JOIN colleges c ON c.id=u.college_id
+    WHERE p.project_id=? ORDER BY u.name`
+  const [rows] = await pool.query(sql, [projectId])
+  res.json(rows)
+})
+
+app.put('/attendance/projects/:id/participants', auth, async (req, res) => {
+  const projectId = Number(req.params.id)
+  const ids = Array.isArray(req.body?.user_ids) ? req.body.user_ids.map((x)=>Number(x)).filter((n)=>Number.isFinite(n) && n>0) : []
+  const conn = await pool.getConnection()
+  try {
+    if (req.user.role !== 'admin') { res.status(403).json({ code: 403, message: '无权限' }); return }
+    await conn.beginTransaction()
+    if (!ids.length) {
+      await conn.query('DELETE FROM attendance_participants WHERE project_id=?', [projectId])
+    } else {
+      const notIn = ids.map(()=>'?').join(',')
+      await conn.query(`DELETE FROM attendance_participants WHERE project_id=? AND user_id NOT IN (${notIn})`, [projectId, ...ids])
+      const placeholders = ids.map(()=>'(?, ?, "assigned", ?)').join(', ')
+      const params = ids.flatMap((uid)=>[projectId, uid, req.user.uid])
+      await conn.query(`INSERT INTO attendance_participants(project_id, user_id, source, assigned_by) VALUES ${placeholders} ON DUPLICATE KEY UPDATE source=VALUES(source), assigned_by=VALUES(assigned_by)`, params)
+    }
+    await conn.commit()
+    res.json({ code: 200, message: '参与人已更新', count: ids.length })
+  } catch (e) {
+    await conn.rollback()
+    console.error('replace participants error:', e)
+    res.status(400).json({ code: 400, message: String(e.message || '更新失败') })
+  } finally {
+    await conn.release()
+  }
+})
+
 app.get('/users/:id/groups', auth, async (req, res) => {
   const id = Number(req.params.id)
   if (req.user.role !== 'admin' && req.user.uid !== id) return res.status(403).json({ code: 403, message: '无权限' })
