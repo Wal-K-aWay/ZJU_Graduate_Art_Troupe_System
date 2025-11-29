@@ -23,4 +23,5 @@ export const api = {
   ,assignAttendanceParticipants: (id: number, user_ids: number[]) => fetch(`${BASE}/attendance/projects/${id}/participants`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ user_ids }) }).then(j)
   ,getAttendanceParticipants: (id: number) => fetch(`${BASE}/attendance/projects/${id}/participants`, { credentials: 'include' }).then(r => r.json())
   ,replaceAttendanceParticipants: (id: number, user_ids: number[]) => fetch(`${BASE}/attendance/projects/${id}/participants`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ user_ids }) }).then(j)
+  ,changePassword: (current_password: string, new_password: string) => fetch(`${BASE}/auth/change_password`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ current_password, new_password }) }).then(j)
 }

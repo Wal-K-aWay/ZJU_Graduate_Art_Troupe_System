@@ -45,8 +45,8 @@ async function getEffectiveRole(uid) {
 app.post('/auth/login', async (req, res) => {
   const { student_no, password } = req.body || {}
   if (!student_no || !password) return res.status(400).json({ code: 400, message: '学号或密码为空' })
-  const [rows] = await pool.query('SELECT id, role, name, password_hash FROM users WHERE student_no = ? AND status = "active" LIMIT 1', [student_no])
-  if (!rows.length) return res.status(401).json({ code: 401, message: '用户不存在或已停用' })
+  const [rows] = await pool.query('SELECT id, role, name, password_hash FROM users WHERE student_no = ? LIMIT 1', [student_no])
+  if (!rows.length) return res.status(401).json({ code: 401, message: '用户不存在' })
   const user = rows[0]
   if (!user.password_hash) return res.status(401).json({ code: 401, message: '未设置密码' })
   const ok = await bcrypt.compare(password, user.password_hash)
@@ -60,6 +60,27 @@ app.post('/auth/login', async (req, res) => {
 app.post('/auth/logout', async (req, res) => {
   res.cookie('token', '', { httpOnly: true, sameSite: 'lax', maxAge: 0 })
   res.json({ code: 200, message: '已退出' })
+})
+
+app.post('/auth/change_password', auth, async (req, res) => {
+  try {
+    const uid = req.user.uid
+    const { current_password = '', new_password = '' } = req.body || {}
+    const np = String(new_password || '')
+    if (!np) return res.status(400).json({ code: 400, message: '新密码不能为空' })
+    const [rows] = await pool.query('SELECT password_hash FROM users WHERE id=? LIMIT 1', [uid])
+    if (!rows.length) return res.status(404).json({ code: 404, message: '用户不存在' })
+    const ph = rows[0]?.password_hash
+    if (ph) {
+      const ok = await bcrypt.compare(String(current_password || ''), ph)
+      if (!ok) return res.status(401).json({ code: 401, message: '当前密码错误' })
+    }
+    const hash = await bcrypt.hash(np, 10)
+    await pool.query('UPDATE users SET password_hash=? WHERE id=?', [hash, uid])
+    return res.json({ code: 200, message: '密码已更新' })
+  } catch (e) {
+    return res.status(400).json({ code: 400, message: String(e.message || '更新失败') })
+  }
 })
 
 app.post('/auth/register', upload.single('avatar'), async (req, res) => {

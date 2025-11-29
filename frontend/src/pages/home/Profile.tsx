@@ -6,6 +6,12 @@ export default function Profile({ me, setMe }: { me: any; setMe: (fn: any)=>void
   const [avatarPreview, setAvatarPreview] = useState<string|null>(null)
   const [colleges, setColleges] = useState<string[]>([])
   const [myGroups, setMyGroups] = useState<any[]>([])
+  const [pwdOld, setPwdOld] = useState('')
+  const [pwdNew, setPwdNew] = useState('')
+  const [pwdConfirm, setPwdConfirm] = useState('')
+  const [pwdMsg, setPwdMsg] = useState('')
+  const [pwdLoading, setPwdLoading] = useState(false)
+  const [showPwd, setShowPwd] = useState(false)
   useEffect(()=>{ (async()=>{ try { const list = await api.colleges(); setColleges(list.map((x:any)=>x.name||x)) } catch { setColleges([]) } })() },[])
   useEffect(()=>{ if (me?.id) { (async()=>{ try { const gs = await api.userGroups(me.id); setMyGroups(Array.isArray(gs)?gs:[]) } catch { setMyGroups([]) } })() } },[me?.id])
   async function onUploadAvatar(file: File | null) { if (!file || !me) return; const r = await api.uploadAvatar(me.id, file); const pid = r.image_id; setProfileDraft((d:any)=>({ ...(d||me), profile_photo_id: pid })); setMe((m:any)=>({ ...(m||{}), profile_photo_id: pid })) }
@@ -17,7 +23,17 @@ export default function Profile({ me, setMe }: { me: any; setMe: (fn: any)=>void
           <div className="block narrow">
             <div className="section-head">
               <div className="section-header"><span className="profile-icon"/> 基本信息</div>
-              <button className="btn-primary btn-slim" onClick={async()=>{ if (!editingProfile) { setProfileDraft(me); setEditingProfile(true) } else { await api.updateMe(me.id, profileDraft); setMe(profileDraft); setEditingProfile(false); setAvatarPreview(null) } }}>{editingProfile? <span className="btn-icon save-icon"/> : <span className="btn-icon edit-icon"/>}{editingProfile?'保存修改':'编辑资料'}</button>
+              <div className="flex gap-2">
+                <button className="btn-primary btn-slim" onClick={()=>{
+                  setPwdMsg('')
+                  setShowPwd((v)=>{
+                    const nv = !v
+                    if (!nv) { setPwdOld(''); setPwdNew(''); setPwdConfirm('') }
+                    return nv
+                  })
+                }}><span className="btn-icon edit-icon"/>修改密码</button>
+                <button className="btn-primary btn-slim" onClick={async()=>{ if (!editingProfile) { setProfileDraft(me); setEditingProfile(true) } else { await api.updateMe(me.id, profileDraft); setMe(profileDraft); setEditingProfile(false); setAvatarPreview(null) } }}>{editingProfile? <span className="btn-icon save-icon"/> : <span className="btn-icon edit-icon"/>}{editingProfile?'保存修改':'编辑资料'}</button>
+              </div>
             </div>
             <div className="profile-section">
               <div className="profile-grid">
@@ -117,9 +133,50 @@ export default function Profile({ me, setMe }: { me: any; setMe: (fn: any)=>void
               </div>
             </div>
           </div>
+          {showPwd && (
+            <div style={{ position:'fixed', inset:'0', background:'rgba(0,0,0,0.25)', zIndex:50 }}>
+              <div className="panel card-form" style={{ position:'absolute', top:'50%', left:'50%', transform:'translate(-50%,-50%)', maxWidth:'520px', width:'calc(100% - 40px)' }}>
+                <div className="title-lg">修改密码</div>
+                <div className="form-grid">
+                  <div className="col-span-2">
+                    <div className="label">当前密码</div>
+                    <input className="input" type="password" value={pwdOld} onChange={e=>setPwdOld(e.target.value)} placeholder="如未设置可留空" />
+                  </div>
+                  <div className="col-span-2">
+                    <div className="label">新密码</div>
+                    <input className="input" type="password" value={pwdNew} onChange={e=>setPwdNew(e.target.value)} />
+                  </div>
+                  <div className="col-span-2">
+                    <div className="label">确认新密码</div>
+                    <input className="input" type="password" value={pwdConfirm} onChange={e=>setPwdConfirm(e.target.value)} />
+                  </div>
+                </div>
+                <div className="toolbar" style={{ marginTop:'12px', display:'flex', gap:'8px' }}>
+                  <button className="btn-primary" onClick={async()=>{
+                    setPwdMsg('')
+                    if (pwdLoading) return
+                    if (!pwdNew) { setPwdMsg('新密码不能为空'); return }
+                    if (pwdNew !== pwdConfirm) { setPwdMsg('两次输入的新密码不一致'); return }
+                    try {
+                      setPwdLoading(true)
+                      await api.changePassword(pwdOld, pwdNew)
+                      setPwdMsg('密码已更新')
+                      setPwdOld(''); setPwdNew(''); setPwdConfirm('')
+                      setShowPwd(false)
+                    } catch (e: any) {
+                      setPwdMsg(String(e?.message || '更新失败'))
+                    } finally {
+                      setPwdLoading(false)
+                    }
+                  }}><span className="btn-icon save-icon"/>保存</button>
+                  <button className="btn-text" onClick={()=>{ setShowPwd(false); setPwdOld(''); setPwdNew(''); setPwdConfirm(''); setPwdMsg('') }}>取消</button>
+                </div>
+                {pwdMsg ? <div className="hint" style={{ marginTop:'8px' }}>{pwdMsg}</div> : null}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   )
 }
-

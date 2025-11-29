@@ -45,8 +45,8 @@ export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) 
             <option value="active">在团</option>
             <option value="inactive">不在团</option>
           </select>
-          <div className="flex gap-2 justify-end col-span-1">
-            <button className="h-10 px-4 bg-blue-500 text-white rounded-lg" onClick={()=>{ setPage(1); load() }}>筛选</button>
+          <div className="flex gap-2 justify-end items-center col-span-2">
+            <button className="h-10 px-4 bg-blue-500 text-white rounded-lg" onClick={()=>{ setPage(1); load() }}><span className="btn-icon save-icon"/>筛选</button>
             {isAdmin && (
               <a className="h-10 px-4 bg-blue-100 text-blue-700 rounded-lg flex items-center" href={api.exportUsersUrl(new URLSearchParams(q as any))} target="_blank">导出CSV</a>
             )}
