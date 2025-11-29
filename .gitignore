@@ -36,3 +36,4 @@ frontend/*.log
 .turbo/
 .eslintcache
 .vscode/
+backend/cookie.txt

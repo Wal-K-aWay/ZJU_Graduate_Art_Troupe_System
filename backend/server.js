@@ -13,7 +13,7 @@ app.use(cookieParser())
 app.use(cors({ origin: ['http://localhost:3000', 'http://localhost:5173'], credentials: true }))
 
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'mysql',
+  host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER || 'zju_user',
   password: process.env.DB_PASSWORD || 'zju_pass',
@@ -38,18 +38,13 @@ pool.on('connection', (conn) => {
 })
 
 async function getEffectiveRole(uid) {
-  const [rows] = await pool.query('SELECT CASE WHEN EXISTS (SELECT 1 FROM user_groups m WHERE m.user_id=? AND m.status="active" AND m.role IN ("leader","deputy")) THEN "admin" ELSE u.role END AS role FROM users u WHERE u.id=? LIMIT 1', [uid, uid])
+  const [rows] = await pool.query('SELECT u.role AS role FROM users u WHERE u.id=? LIMIT 1', [uid])
   return rows?.[0]?.role || 'member'
 }
 
-async function isGlobalAdmin(uid) {
-  const [rows] = await pool.query('SELECT role FROM users WHERE id=? LIMIT 1', [uid])
-  return String(rows?.[0]?.role || '') === 'admin'
-}
-
-async function canEditMember(editorUid, targetUid) {
-  const [rows] = await pool.query('SELECT 1 FROM user_groups m1 JOIN user_groups m2 ON m1.group_id=m2.group_id WHERE m1.user_id=? AND m1.status="active" AND m1.role IN ("leader","deputy") AND m2.user_id=? AND m2.status="active" LIMIT 1', [editorUid, targetUid])
-  return rows && rows.length > 0
+async function getLeaderGroupIds(uid) {
+  const [rows] = await pool.query('SELECT m.group_id AS id FROM user_groups m WHERE m.user_id=? AND m.status="active" AND m.role IN ("leader","deputy")', [uid])
+  return Array.isArray(rows) ? rows.map(r=>Number(r.id)).filter(n=>Number.isFinite(n)) : []
 }
 
 app.post('/auth/login', async (req, res) => {
@@ -145,7 +140,8 @@ async function auth(req, res, next) {
   try {
     const dec = jwt.verify(t, jwtSecret)
     const effRole = await getEffectiveRole(dec.uid)
-    req.user = { ...dec, role: effRole }
+    const leaderGroupIds = await getLeaderGroupIds(dec.uid)
+    req.user = { ...dec, role: effRole, leader_group_ids: leaderGroupIds }
     next()
   } catch {
     return res.status(401).json({ code: 401, message: '会话失效' })
@@ -153,7 +149,7 @@ async function auth(req, res, next) {
 }
 
 app.get('/auth/me', auth, async (req, res) => {
-  const [rows] = await pool.query('SELECT u.id, CASE WHEN EXISTS (SELECT 1 FROM user_groups m WHERE m.user_id=u.id AND m.status="active" AND m.role IN ("leader","deputy")) THEN "admin" ELSE u.role END AS role, u.name,u.gender,DATE_FORMAT(u.birthday, "%Y-%m-%d") AS birthday,u.student_no,CONVERT(c.name USING utf8mb4) AS college,u.phone,u.join_year,u.profile_photo_id FROM users u JOIN colleges c ON c.id=u.college_id WHERE u.id=? LIMIT 1', [req.user.uid])
+  const [rows] = await pool.query('SELECT u.id, u.role, u.name,u.gender,DATE_FORMAT(u.birthday, "%Y-%m-%d") AS birthday,u.student_no,CONVERT(c.name USING utf8mb4) AS college,u.phone,u.join_year,u.profile_photo_id FROM users u JOIN colleges c ON c.id=u.college_id WHERE u.id=? LIMIT 1', [req.user.uid])
   if (!rows.length) return res.status(404).json({ code: 404, message: '用户不存在' })
   res.json(rows[0])
 })
@@ -163,7 +159,7 @@ app.get('/users', async (req, res) => {
   const sql = `SELECT DISTINCT
     u.id,
     u.name,
-    CASE WHEN EXISTS (SELECT 1 FROM user_groups mz WHERE mz.user_id=u.id AND mz.status='active' AND mz.role IN ('leader','deputy')) THEN 'admin' ELSE u.role END AS role,
+    u.role AS role,
     u.student_no,
     u.gender,
     CONVERT(c.name USING utf8mb4) AS college,
@@ -171,7 +167,7 @@ app.get('/users', async (req, res) => {
     u.profile_photo_id,
     u.status AS status,
     CAST((
-      SELECT JSON_ARRAYAGG(JSON_OBJECT('name', CONVERT(g.name USING utf8mb4), 'role', m.role))
+      SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'name', CONVERT(g.name USING utf8mb4), 'role', m.role))
       FROM user_groups m JOIN troupe_groups g ON g.id=m.group_id
       WHERE m.user_id=u.id AND m.status='active'
     ) AS CHAR) AS groups_json
@@ -190,27 +186,54 @@ app.get('/users', async (req, res) => {
 })
 
 app.put('/users/:id', auth, async (req, res) => {
-  const id = Number(req.params.id)
-  if (req.user.uid !== id) {
-    const isAdmin = await isGlobalAdmin(req.user.uid)
-    const sameGroup = await canEditMember(req.user.uid, id)
-    if (!isAdmin && !sameGroup) return res.status(403).json({ code: 403, message: '无权限' })
+  try {
+    const id = Number(req.params.id)
+    const b = req.body || {}
+    if (req.user.role !== 'admin' && req.user.uid !== id) {
+      const [rows] = await pool.query('SELECT m.group_id FROM user_groups m WHERE m.user_id=? AND m.status="active"', [id])
+      const targetGroups = Array.isArray(rows) ? rows.map(r=>Number(r.group_id)).filter(n=>Number.isFinite(n)) : []
+      const hasScope = Array.isArray(req.user.leader_group_ids) && req.user.leader_group_ids.some((gid)=>targetGroups.includes(gid))
+      if (!hasScope) return res.status(403).json({ code: 403, message: '无权限' })
+    }
+
+    const name = String(b.name || '').trim() || null
+    const gender = ['male','female'].includes(String(b.gender)) ? String(b.gender) : null
+    const phone = String(b.phone || '').trim() || null
+    const birthday = String(b.birthday || '').trim() || null
+    const joinYear = Number(b.join_year)
+    const join_year = Number.isFinite(joinYear) ? joinYear : null
+
+    let collegeId = null
+    if (b.college) {
+      let [colRows] = await pool.query('SELECT id FROM colleges WHERE TRIM(name) = TRIM(?) LIMIT 1', [b.college])
+      if (!colRows.length) { await pool.query('INSERT INTO colleges(name) VALUES(?) ON DUPLICATE KEY UPDATE name=VALUES(name)', [b.college]); [colRows] = await pool.query('SELECT id FROM colleges WHERE TRIM(name)=TRIM(?) LIMIT 1', [b.college]) }
+      collegeId = colRows?.[0]?.id || null
+    }
+
+    const status = String(b.status || '').trim()
+    const statusVal = (status === 'active' || status === 'inactive') ? status : null
+
+    const sets = []
+    const params = []
+    if (name != null) { sets.push('name=?'); params.push(name) }
+    if (gender != null) { sets.push('gender=?'); params.push(gender) }
+    if (phone != null) { sets.push('phone=?'); params.push(phone) }
+    if (birthday != null) { sets.push('birthday=?'); params.push(birthday) }
+    if (join_year != null) { sets.push('join_year=?'); params.push(join_year) }
+    if (collegeId != null) { sets.push('college_id=?'); params.push(collegeId) }
+    if (statusVal != null) { sets.push('status=?'); params.push(statusVal) }
+
+    if (!sets.length) { return res.json({ code: 200, message: '未变更' }) }
+    await pool.query(`UPDATE users SET ${sets.join(', ')} WHERE id=?`, [...params, id])
+    res.json({ code: 200, message: '更新成功' })
+  } catch (e) {
+    res.status(400).json({ code: 400, message: String(e.message || e) })
   }
-  const b = req.body || {}
-  let [colRows] = await pool.query('SELECT id FROM colleges WHERE TRIM(name) = TRIM(?) LIMIT 1', [b.college])
-  if (!colRows.length && b.college) { await pool.query('INSERT INTO colleges(name) VALUES(?) ON DUPLICATE KEY UPDATE name=VALUES(name)', [b.college]); [colRows] = await pool.query('SELECT id FROM colleges WHERE TRIM(name)=TRIM(?) LIMIT 1', [b.college]) }
-  const collegeId = colRows?.[0]?.id
-  await pool.query('UPDATE users SET name=?, gender=?, phone=?, birthday=?, join_year=?, college_id=COALESCE(?,college_id) WHERE id=?', [b.name, b.gender, b.phone, b.birthday, b.join_year, collegeId, id])
-  res.json({ code: 200, message: '更新成功' })
 })
 
 app.post('/users/:id/avatar', auth, upload.single('avatar'), async (req, res) => {
   const id = Number(req.params.id)
-  if (req.user.uid !== id) {
-    const isAdmin = await isGlobalAdmin(req.user.uid)
-    const sameGroup = await canEditMember(req.user.uid, id)
-    if (!isAdmin && !sameGroup) return res.status(403).json({ code: 403, message: '无权限' })
-  }
+  if (req.user.role !== 'admin' && req.user.uid !== id) return res.status(403).json({ code: 403, message: '无权限' })
   if (!req.file) return res.status(400).json({ code: 400, message: '未选择文件' })
   const conn = await pool.getConnection()
   try {
@@ -382,7 +405,7 @@ app.get('/attendance/projects/:id/participants', auth, async (req, res) => {
   const projectId = Number(req.params.id)
   const sql = `SELECT u.id, u.name, u.student_no, u.gender, CONVERT(c.name USING utf8mb4) AS college, u.join_year,
     CAST((
-      SELECT JSON_ARRAYAGG(JSON_OBJECT('name', CONVERT(g.name USING utf8mb4), 'role', m.role))
+      SELECT JSON_ARRAYAGG(JSON_OBJECT('id', g.id, 'name', CONVERT(g.name USING utf8mb4), 'role', m.role))
       FROM user_groups m JOIN troupe_groups g ON g.id=m.group_id
       WHERE m.user_id=u.id AND m.status='active'
     ) AS CHAR) AS groups_json
@@ -431,10 +454,30 @@ app.get('/users/:id/groups', auth, async (req, res) => {
 })
 
 app.delete('/users/:id', auth, async (req, res) => {
-  const isAdmin = await isGlobalAdmin(req.user.uid)
-  if (!isAdmin) return res.status(403).json({ code: 403, message: '无权限' })
-  await pool.query('UPDATE users SET status="inactive" WHERE id=?', [req.params.id])
-  res.json({ code: 200, message: '已删除' })
+  const id = Number(req.params.id)
+  if (req.user.role !== 'admin') {
+    const [rows] = await pool.query('SELECT m.group_id FROM user_groups m WHERE m.user_id=? AND m.status="active"', [id])
+    const targetGroups = Array.isArray(rows) ? rows.map(r=>Number(r.group_id)).filter(n=>Number.isFinite(n)) : []
+    const hasScope = Array.isArray(req.user.leader_group_ids) && req.user.leader_group_ids.some((gid)=>targetGroups.includes(gid))
+    if (!hasScope) return res.status(403).json({ code: 403, message: '无权限' })
+  }
+  const conn = await pool.getConnection()
+  try {
+    await conn.beginTransaction()
+    const [uRows] = await conn.query('SELECT profile_photo_id FROM users WHERE id=? LIMIT 1', [id])
+    const photoId = uRows?.[0]?.profile_photo_id || null
+    await conn.query('DELETE FROM user_groups WHERE user_id=?', [id])
+    await conn.query('DELETE FROM attendance_participants WHERE user_id=?', [id])
+    await conn.query('DELETE FROM users WHERE id=?', [id])
+    if (photoId) await conn.query('DELETE FROM images WHERE id=?', [photoId])
+    await conn.commit()
+    res.json({ code: 200, message: '已删除' })
+  } catch (e) {
+    await conn.rollback()
+    res.status(400).json({ code: 400, message: String(e.message || '删除失败') })
+  } finally {
+    await conn.release()
+  }
 })
 
 app.get('/users/export', auth, async (req, res) => {
