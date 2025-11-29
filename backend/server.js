@@ -42,6 +42,16 @@ async function getEffectiveRole(uid) {
   return rows?.[0]?.role || 'member'
 }
 
+async function isGlobalAdmin(uid) {
+  const [rows] = await pool.query('SELECT role FROM users WHERE id=? LIMIT 1', [uid])
+  return String(rows?.[0]?.role || '') === 'admin'
+}
+
+async function canEditMember(editorUid, targetUid) {
+  const [rows] = await pool.query('SELECT 1 FROM user_groups m1 JOIN user_groups m2 ON m1.group_id=m2.group_id WHERE m1.user_id=? AND m1.status="active" AND m1.role IN ("leader","deputy") AND m2.user_id=? AND m2.status="active" LIMIT 1', [editorUid, targetUid])
+  return rows && rows.length > 0
+}
+
 app.post('/auth/login', async (req, res) => {
   const { student_no, password } = req.body || {}
   if (!student_no || !password) return res.status(400).json({ code: 400, message: '学号或密码为空' })
@@ -181,7 +191,11 @@ app.get('/users', async (req, res) => {
 
 app.put('/users/:id', auth, async (req, res) => {
   const id = Number(req.params.id)
-  if (req.user.role !== 'admin' && req.user.uid !== id) return res.status(403).json({ code: 403, message: '无权限' })
+  if (req.user.uid !== id) {
+    const isAdmin = await isGlobalAdmin(req.user.uid)
+    const sameGroup = await canEditMember(req.user.uid, id)
+    if (!isAdmin && !sameGroup) return res.status(403).json({ code: 403, message: '无权限' })
+  }
   const b = req.body || {}
   let [colRows] = await pool.query('SELECT id FROM colleges WHERE TRIM(name) = TRIM(?) LIMIT 1', [b.college])
   if (!colRows.length && b.college) { await pool.query('INSERT INTO colleges(name) VALUES(?) ON DUPLICATE KEY UPDATE name=VALUES(name)', [b.college]); [colRows] = await pool.query('SELECT id FROM colleges WHERE TRIM(name)=TRIM(?) LIMIT 1', [b.college]) }
@@ -192,7 +206,11 @@ app.put('/users/:id', auth, async (req, res) => {
 
 app.post('/users/:id/avatar', auth, upload.single('avatar'), async (req, res) => {
   const id = Number(req.params.id)
-  if (req.user.role !== 'admin' && req.user.uid !== id) return res.status(403).json({ code: 403, message: '无权限' })
+  if (req.user.uid !== id) {
+    const isAdmin = await isGlobalAdmin(req.user.uid)
+    const sameGroup = await canEditMember(req.user.uid, id)
+    if (!isAdmin && !sameGroup) return res.status(403).json({ code: 403, message: '无权限' })
+  }
   if (!req.file) return res.status(400).json({ code: 400, message: '未选择文件' })
   const conn = await pool.getConnection()
   try {
@@ -413,7 +431,8 @@ app.get('/users/:id/groups', auth, async (req, res) => {
 })
 
 app.delete('/users/:id', auth, async (req, res) => {
-  if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
+  const isAdmin = await isGlobalAdmin(req.user.uid)
+  if (!isAdmin) return res.status(403).json({ code: 403, message: '无权限' })
   await pool.query('UPDATE users SET status="inactive" WHERE id=?', [req.params.id])
   res.json({ code: 200, message: '已删除' })
 })
