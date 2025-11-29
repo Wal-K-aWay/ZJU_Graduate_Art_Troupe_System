@@ -38,7 +38,8 @@ export default function Home() {
   useEffect(()=>{
     function tick(){
       const d = new Date()
-      const dStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d).replace(/\//g, '-')
+      const [y, m, day] = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d).split('/')
+      const dStr = `${y}年${m}月${day}日`
       const wStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'long' }).format(d)
       const tStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(d)
       setNowStr(`${dStr} ${wStr} ${tStr}`)

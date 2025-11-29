@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) {
   const [rows, setRows] = useState<any[]>([])
-  const [q, setQ] = useState({ name:'', college:'', year:'', gender:'', group:'' })
+  const [q, setQ] = useState({ name:'', college:'', year:'', gender:'', group:'', status:'' })
   const [colleges, setColleges] = useState<string[]>([])
   const [groups, setGroups] = useState<string[]>([])
   useEffect(()=>{ (async()=>{ try { const list = await api.colleges(); setColleges(list.map((x:any)=>x.name||x)) } catch { setColleges([]) } })() },[])
@@ -25,24 +25,31 @@ export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) 
   return (
     <div>
       <div className="filter-box">
-        <div className="grid grid-cols-6 gap-3">
-          <input className="h-10 border rounded-lg px-3" placeholder="搜索姓名或学号" value={q.name} onChange={e=>setQ({...q,name:e.target.value})} />
-          <select className="h-10 border rounded-lg px-3" value={q.college} onChange={e=>setQ({...q,college:e.target.value})} style={{ color: q.college ? '#0f172a' : '#9ca3af' }}>
+        <div className="grid grid-cols-12 gap-3">
+          <input className="h-10 border rounded-lg px-3 col-span-2" placeholder="搜索姓名或学号" value={q.name} onChange={e=>setQ({...q,name:e.target.value})} />
+          <select className="h-10 border rounded-lg px-3 col-span-3" value={q.college} onChange={e=>setQ({...q,college:e.target.value})} style={{ color: q.college ? '#0f172a' : '#9ca3af' }}>
             <option value="">选择学院</option>
             {colleges.map((n)=> <option key={n} value={n}>{n}</option>)}
           </select>
-          <select className="h-10 border rounded-lg px-3" value={q.group} onChange={e=>setQ({...q,group:e.target.value})} style={{ color: q.group ? '#0f172a' : '#9ca3af' }}>
+          <select className="h-10 border rounded-lg px-3 col-span-2" value={q.group} onChange={e=>setQ({...q,group:e.target.value})} style={{ color: q.group ? '#0f172a' : '#9ca3af' }}>
             <option value="">选择分团</option>
             {groups.map((n)=> <option key={n} value={n}>{n}</option>)}
           </select>
-          <select className="h-10 border rounded-lg px-3" value={q.year} onChange={e=>setQ({...q,year:e.target.value})} style={{ color: q.year ? '#0f172a' : '#9ca3af' }}>
+          <select className="h-10 border rounded-lg px-3 col-span-1" value={q.year} onChange={e=>setQ({...q,year:e.target.value})} style={{ color: q.year ? '#0f172a' : '#9ca3af' }}>
             <option value="">入团年份</option>
             {yearOpts.map(v=> <option key={v} value={v}>{v}</option>)}
           </select>
-          <select className="h-10 border rounded-lg px-3" value={q.gender} onChange={e=>setQ({...q,gender:e.target.value})} style={{ color: q.gender ? '#0f172a' : '#9ca3af' }}><option value="">性别</option><option value="male">男</option><option value="female">女</option></select>
-          <div className="flex gap-2 justify-end">
+          <select className="h-10 border rounded-lg px-3 col-span-1" value={q.gender} onChange={e=>setQ({...q,gender:e.target.value})} style={{ color: q.gender ? '#0f172a' : '#9ca3af' }}><option value="">性别</option><option value="male">男</option><option value="female">女</option></select>
+          <select className="h-10 border rounded-lg px-3 col-span-1" value={q.status} onChange={e=>setQ({...q,status:e.target.value})} style={{ color: q.status ? '#0f172a' : '#9ca3af' }}>
+            <option value="">是否在团</option>
+            <option value="active">在团</option>
+            <option value="inactive">不在团</option>
+          </select>
+          <div className="flex gap-2 justify-end col-span-1">
             <button className="h-10 px-4 bg-blue-500 text-white rounded-lg" onClick={()=>{ setPage(1); load() }}>筛选</button>
-            <a className="h-10 px-4 bg-blue-100 text-blue-700 rounded-lg flex items-center" href={api.exportUsersUrl(new URLSearchParams(q as any))} target="_blank">导出CSV</a>
+            {isAdmin && (
+              <a className="h-10 px-4 bg-blue-100 text-blue-700 rounded-lg flex items-center" href={api.exportUsersUrl(new URLSearchParams(q as any))} target="_blank">导出CSV</a>
+            )}
           </div>
         </div>
       </div>
@@ -55,7 +62,8 @@ export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) 
               <col style={{ width: '12%' }} />
               <col style={{ width: '4%' }} />
               <col style={{ width: '20%' }} />
-              <col style={{ width: '32%' }} />
+              <col style={{ width: '24%' }} />
+              <col style={{ width: '8%' }} />
               <col style={{ width: '6%' }} />
               <col style={{ width: '12%' }} />
             </>
@@ -65,13 +73,14 @@ export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) 
               <col style={{ width: '12%' }} />
               <col style={{ width: '20%' }} />
               <col style={{ width: '4%' }} />
-              <col style={{ width: '21%' }} />
-              <col style={{ width: '25%' }} />
-              <col style={{ width: '12%' }} />
+              <col style={{ width: '19%' }} />
+              <col style={{ width: '20%' }} />
+              <col style={{ width: '9%' }} />
+              <col style={{ width: '10%' }} />
             </>
           )}
         </colgroup>
-        <thead><tr><th>头像</th><th>姓名</th><th>学号</th><th>性别</th><th>学院</th><th>所属分团</th><th>入团年份</th>{isAdmin && <th>操作</th>}</tr></thead>
+        <thead><tr><th>头像</th><th>姓名</th><th>学号</th><th>性别</th><th>学院</th><th>所属分团</th><th>状态</th><th>入团年份</th>{isAdmin && <th>操作</th>}</tr></thead>
         <tbody>
           {viewRows.map(u=> (
             <tr key={u.id}>
@@ -85,6 +94,7 @@ export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) 
                   {(()=>{ const gs = Array.isArray(u.groups_json) ? u.groups_json : (typeof u.groups_json === 'string' ? JSON.parse(u.groups_json||'[]') : []); return gs && gs.length ? gs.map((g:any, i:number)=> <span key={i} className="badge">{g.name}{g.role==='leader'?'（团长）':(g.role==='deputy'?'（副团长）':'')}</span>) : <span className="muted">暂无分团</span> })()}
                 </div>
               </td>
+              <td><span className="badge">{(String(u.status||'').trim()==='active')?'在团':''}</span></td>
               <td><span className="badge">{u.join_year ? `${u.join_year}年` : ''}</span></td>
               {isAdmin && <td><div className="flex gap-2"><button className="btn-text" onClick={()=>startEdit(u)}>编辑</button><button className="btn-text" onClick={()=>delUser(u.id)}>删除</button></div></td>}
             </tr>
@@ -137,4 +147,3 @@ export default function MembersAdmin({ isAdmin = true }: { isAdmin?: boolean }) 
     </div>
   )
 }
-

@@ -128,7 +128,7 @@ app.get('/auth/me', auth, async (req, res) => {
 })
 
 app.get('/users', async (req, res) => {
-  const { name = '', college = '', year = '', gender = '', group = '' } = req.query
+  const { name = '', college = '', year = '', gender = '', group = '', status = '' } = req.query
   const sql = `SELECT DISTINCT
     u.id,
     u.name,
@@ -138,6 +138,7 @@ app.get('/users', async (req, res) => {
     CONVERT(c.name USING utf8mb4) AS college,
     u.join_year,
     u.profile_photo_id,
+    u.status AS status,
     CAST((
       SELECT JSON_ARRAYAGG(JSON_OBJECT('name', CONVERT(g.name USING utf8mb4), 'role', m.role))
       FROM user_groups m JOIN troupe_groups g ON g.id=m.group_id
@@ -150,8 +151,9 @@ app.get('/users', async (req, res) => {
     AND (?='' OR c.name LIKE CONCAT('%',?,'%'))
     AND (?='' OR u.join_year = ?)
     AND (?='' OR u.gender = ?)
-    AND (?='' OR g2.name LIKE CONCAT('%',?,'%'))`
-  const params = [name, name, name, college, college, year, year, gender, gender, group, group]
+    AND (?='' OR g2.name LIKE CONCAT('%',?,'%'))
+    AND (?='' OR u.status = ?)`
+  const params = [name, name, name, college, college, year, year, gender, gender, group, group, status, status]
   const [rows] = await pool.query(sql, params)
   res.json(rows)
 })
@@ -397,9 +399,9 @@ app.delete('/users/:id', auth, async (req, res) => {
 
 app.get('/users/export', auth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
-  const { name = '', college = '', year = '', gender = '', group = '' } = req.query
-  const sql = `SELECT DISTINCT u.name,u.student_no,u.gender,CONVERT(c.name USING utf8mb4) AS college,u.join_year FROM users u JOIN colleges c ON c.id=u.college_id LEFT JOIN user_groups m2 ON m2.user_id=u.id AND m2.status='active' LEFT JOIN troupe_groups g2 ON g2.id=m2.group_id WHERE u.status='active' AND (?='' OR u.name LIKE CONCAT('%',?,'%') OR u.student_no LIKE CONCAT('%',?,'%')) AND (?='' OR c.name LIKE CONCAT('%',?,'%')) AND (?='' OR u.join_year = ?) AND (?='' OR u.gender = ?) AND (?='' OR g2.name LIKE CONCAT('%',?,'%'))`
-  const params = [name, name, name, college, college, year, year, gender, gender, group, group]
+  const { name = '', college = '', year = '', gender = '', group = '', status = '' } = req.query
+  const sql = `SELECT DISTINCT u.name,u.student_no,u.gender,CONVERT(c.name USING utf8mb4) AS college,u.join_year FROM users u JOIN colleges c ON c.id=u.college_id LEFT JOIN user_groups m2 ON m2.user_id=u.id AND m2.status='active' LEFT JOIN troupe_groups g2 ON g2.id=m2.group_id WHERE (?='' OR u.name LIKE CONCAT('%',?,'%') OR u.student_no LIKE CONCAT('%',?,'%')) AND (?='' OR c.name LIKE CONCAT('%',?,'%')) AND (?='' OR u.join_year = ?) AND (?='' OR u.gender = ?) AND (?='' OR g2.name LIKE CONCAT('%',?,'%')) AND (?='' OR u.status = ?)`
+  const params = [name, name, name, college, college, year, year, gender, gender, group, group, status, status]
   const [rows] = await pool.query(sql, params)
   res.setHeader('Content-Type', 'text/csv; charset=utf-8')
   res.setHeader('Content-Disposition', 'attachment; filename="members.csv"')
