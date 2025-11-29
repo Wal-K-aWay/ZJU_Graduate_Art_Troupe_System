@@ -16,6 +16,7 @@ export default function Home() {
   const [indicatorLeft, setIndicatorLeft] = useState(0)
   const [indicatorWidth, setIndicatorWidth] = useState(0)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [nowStr, setNowStr] = useState('')
   useEffect(()=>{
     function calc() {
       const el = document.getElementById(`tab-${cur}`)
@@ -34,6 +35,18 @@ export default function Home() {
     window.addEventListener('resize', calc)
     return ()=>window.removeEventListener('resize', calc)
   }, [cur])
+  useEffect(()=>{
+    function tick(){
+      const d = new Date()
+      const dStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d).replace(/\//g, '-')
+      const wStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', weekday: 'long' }).format(d)
+      const tStr = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(d)
+      setNowStr(`${dStr} ${wStr} ${tStr}`)
+    }
+    tick()
+    const t = setInterval(tick, 1000)
+    return ()=>clearInterval(t)
+  }, [])
   return (
     <div className="app min-h-full">
       <div className="navbar">
@@ -48,6 +61,7 @@ export default function Home() {
           </div>
         </div>
         <div className="tab-indicator" style={{ left: indicatorLeft, width: indicatorWidth }} />
+        <div className="muted" style={{ marginRight: '12px' }}>{nowStr}</div>
         <div className="user-menu" onMouseEnter={()=>setMenuOpen(true)} onMouseLeave={()=>setMenuOpen(false)}>
           <div className="user">{me?.profile_photo_id ? (<img className="avatar-sm-img" src={api.imageUrl(me.profile_photo_id)} alt="头像" />) : (<span className="avatar-sm" />)}{me?.name || '未登录'}</div>
           {menuOpen && (

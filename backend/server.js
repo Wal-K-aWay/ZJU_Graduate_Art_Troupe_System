@@ -34,6 +34,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 *
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret'
 pool.on('connection', (conn) => {
   conn.query('SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci')
+  conn.query("SET time_zone = '+08:00'")
 })
 
 async function getEffectiveRole(uid) {
@@ -203,7 +204,65 @@ app.get('/stats/today_birthdays', async (req, res) => {
 app.get('/attendance/projects', auth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ code: 403, message: '无权限' })
   const [rows] = await pool.query('SELECT id, CONVERT(title USING utf8mb4) AS title, CONVERT(location USING utf8mb4) AS location, DATE_FORMAT(start_time, "%Y-%m-%d %H:%i") AS start_time, DATE_FORMAT(end_time, "%Y-%m-%d %H:%i") AS end_time, status, created_by, created_at FROM attendance_projects ORDER BY start_time DESC')
-  res.json(rows)
+  function parseUtcFromBj(s) {
+    if (typeof s !== 'string' || !s) return null
+    const [d, t] = s.split(' ')
+    if (!t) return null
+    const [y, m, day] = d.split('-').map((x)=>Number(x))
+    const [hh, mm] = t.split(':').map((x)=>Number(x))
+    return Date.UTC(y, (m||1)-1, day||1, (hh||0)-8, mm||0)
+  }
+  const utcNow = Date.now()
+  const list = Array.isArray(rows) ? rows.map((r)=>{
+    const st = parseUtcFromBj(r.start_time)
+    const et = parseUtcFromBj(r.end_time)
+    let ts = '未开始'
+    if (st != null && utcNow < st) ts = '未开始'
+    else if (st != null && et != null && utcNow >= st && utcNow <= et) ts = '进行中'
+    else if (et != null && utcNow > et) ts = '已结束'
+    else if (st != null && et == null && utcNow >= st) ts = '进行中'
+    return { ...r, time_status: ts }
+  }) : []
+  res.json(list)
+})
+
+app.get('/attendance/my', auth, async (req, res) => {
+  try {
+    const uid = req.user.uid
+    const sql = `SELECT p.id,
+      CONVERT(p.title USING utf8mb4) AS title,
+      CONVERT(p.location USING utf8mb4) AS location,
+      DATE_FORMAT(p.start_time, "%Y-%m-%d %H:%i") AS start_time,
+      DATE_FORMAT(p.end_time, "%Y-%m-%d %H:%i") AS end_time,
+      p.status
+      FROM attendance_participants ap
+      JOIN attendance_projects p ON p.id = ap.project_id
+      WHERE ap.user_id = ?
+      ORDER BY p.start_time DESC`
+    const [rows] = await pool.query(sql, [uid])
+    function parseUtcFromBj(s) {
+      if (typeof s !== 'string' || !s) return null
+      const [d, t] = s.split(' ')
+      if (!t) return null
+      const [y, m, day] = d.split('-').map((x)=>Number(x))
+      const [hh, mm] = t.split(':').map((x)=>Number(x))
+      return Date.UTC(y, (m||1)-1, day||1, (hh||0)-8, mm||0)
+    }
+    const utcNow = Date.now()
+    const list = Array.isArray(rows) ? rows.map((r)=>{
+      const st = parseUtcFromBj(r.start_time)
+      const et = parseUtcFromBj(r.end_time)
+      let ts = '未开始'
+      if (st != null && utcNow < st) ts = '未开始'
+      else if (st != null && et != null && utcNow >= st && utcNow <= et) ts = '进行中'
+      else if (et != null && utcNow > et) ts = '已结束'
+      else if (st != null && et == null && utcNow >= st) ts = '进行中'
+      return { ...r, time_status: ts }
+    }) : []
+    res.json(list)
+  } catch (e) {
+    res.status(400).json({ code: 400, message: String(e.message || '查询失败') })
+  }
 })
 
 app.post('/attendance/projects', auth, async (req, res) => {
@@ -211,12 +270,20 @@ app.post('/attendance/projects', auth, async (req, res) => {
   const b = req.body || {}
   const title = String(b.title || '').trim()
   const location = String(b.location || '').trim()
-  const time = String(b.time || '').trim()
-  if (!title || !location || !time) return res.status(400).json({ code: 400, message: '缺少必填字段' })
-  let start = time
-  if (time.includes('T')) start = time.replace('T', ' ') + (time.length === 16 ? ':00' : (time.length === 19 ? '' : ''))
-  else if (time.length === 16) start = time + ':00'
-  const [r] = await pool.query('INSERT INTO attendance_projects(title, location, start_time, status, created_by) VALUES(?, ?, ?, "open", ?)', [title, location, start, req.user.uid])
+  const startIn = String(b.start_time || b.time || '').trim()
+  const endIn = String(b.end_time || '').trim()
+  if (!title || !location || !startIn || !endIn) return res.status(400).json({ code: 400, message: '缺少必填字段' })
+  let start = startIn
+  if (startIn.includes('T')) start = startIn.replace('T', ' ') + (startIn.length === 16 ? ':00' : (startIn.length === 19 ? '' : ''))
+  else if (startIn.length === 16) start = startIn + ':00'
+  let end = endIn
+  if (endIn.includes('T')) end = endIn.replace('T', ' ') + (endIn.length === 16 ? ':00' : (endIn.length === 19 ? '' : ''))
+  else if (endIn.length === 16) end = endIn + ':00'
+  const sdt = new Date(start.replace(' ', 'T'))
+  const edt = new Date(end.replace(' ', 'T'))
+  if (!(sdt instanceof Date && !isNaN(sdt.valueOf())) || !(edt instanceof Date && !isNaN(edt.valueOf()))) return res.status(400).json({ code: 400, message: '时间不合法' })
+  if (edt.getTime() <= sdt.getTime()) return res.status(400).json({ code: 400, message: '结束时间必须晚于开始时间' })
+  const [r] = await pool.query('INSERT INTO attendance_projects(title, location, start_time, end_time, status, created_by) VALUES(?, ?, ?, ?, "open", ?)', [title, location, start, end, req.user.uid])
   res.status(201).json({ code: 201, message: '创建成功', id: r.insertId })
 })
 
@@ -226,14 +293,22 @@ app.put('/attendance/projects/:id', auth, async (req, res) => {
   const b = req.body || {}
   const title = String(b.title || '').trim()
   const location = String(b.location || '').trim()
-  const time = String(b.time || '').trim()
+  const startIn = String(b.start_time || b.time || '').trim()
+  const endIn = String(b.end_time || '').trim()
   const status = String(b.status || '').trim()
-  if (!title || !location || !time) return res.status(400).json({ code: 400, message: '缺少必填字段' })
-  let start = time
-  if (time.includes('T')) start = time.replace('T', ' ') + (time.length === 16 ? ':00' : (time.length === 19 ? '' : ''))
-  else if (time.length === 16) start = time + ':00'
-  const sql = status ? 'UPDATE attendance_projects SET title=?, location=?, start_time=?, status=? WHERE id=?' : 'UPDATE attendance_projects SET title=?, location=?, start_time=? WHERE id=?'
-  const params = status ? [title, location, start, status, id] : [title, location, start, id]
+  if (!title || !location || !startIn || !endIn) return res.status(400).json({ code: 400, message: '缺少必填字段' })
+  let start = startIn
+  if (startIn.includes('T')) start = startIn.replace('T', ' ') + (startIn.length === 16 ? ':00' : (startIn.length === 19 ? '' : ''))
+  else if (startIn.length === 16) start = startIn + ':00'
+  let end = endIn
+  if (endIn.includes('T')) end = endIn.replace('T', ' ') + (endIn.length === 16 ? ':00' : (endIn.length === 19 ? '' : ''))
+  else if (endIn.length === 16) end = endIn + ':00'
+  const sdt = new Date(start.replace(' ', 'T'))
+  const edt = new Date(end.replace(' ', 'T'))
+  if (!(sdt instanceof Date && !isNaN(sdt.valueOf())) || !(edt instanceof Date && !isNaN(edt.valueOf()))) return res.status(400).json({ code: 400, message: '时间不合法' })
+  if (edt.getTime() <= sdt.getTime()) return res.status(400).json({ code: 400, message: '结束时间必须晚于开始时间' })
+  const sql = status ? 'UPDATE attendance_projects SET title=?, location=?, start_time=?, end_time=?, status=? WHERE id=?' : 'UPDATE attendance_projects SET title=?, location=?, start_time=?, end_time=? WHERE id=?'
+  const params = status ? [title, location, start, end, status, id] : [title, location, start, end, id]
   await pool.query(sql, params)
   res.json({ code: 200, message: '更新成功' })
 })
